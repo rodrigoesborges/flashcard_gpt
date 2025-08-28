@@ -1,4 +1,55 @@
-<!DOCTYPE html>
+        function createBasicFlashcardsFromText(modelResponse, originalText) {
+            // Se o modelo deu uma resposta estruturada mas não em JSON,
+            // tentar extrair informações e criar flashcards básicos
+            const flashcards = [];
+            
+            // Método 1: Se o modelo listou pontos, usar eles
+            const bulletPoints = modelResponse.match(/[-•*]\s*(.+)/g);
+            if (bulletPoints && bulletPoints.length > 0) {
+                bulletPoints.slice(0, 8).forEach(point => {
+                    const clean = point.replace(/[-•*]\s*/, '').trim();
+                    if (clean.length > 10) {
+                        flashcards.push({
+                            Front: `O que o texto menciona sobre o tópico principal?`,
+                            Back: clean
+                        });
+                    }
+                });
+            }
+            
+            // Método 2: Se o modelo fez uma explicação, dividir em conceitos
+            if (flashcards.length === 0) {
+                const sentences = modelResponse.split(/[.!?]+/).filter(s => s.trim().length > 30);
+                
+                sentences.slice(0, 6).forEach((sentence, index) => {
+                    const trimmed = sentence.trim();
+                    if (trimmed.length > 0 && !trimmed.toLowerCase().includes('texto fornecido')) {
+                        flashcards.push({
+                            Front: `Qual é o ponto ${index + 1} mencionado no documento?`,
+                            Back: trimmed
+                        });
+                    }
+                });
+            }
+            
+            return flashcards.length > 0 ? flashcards : null;
+        }
+
+        function createEmergencyFlashcards(originalText) {
+            // Última tentativa: criar flashcards diretamente do texto original
+            const flashcards = [];
+            
+            // Dividir texto em sentenças
+            const sentences = originalText.split(/[.!?]+/)
+                .filter(s => s.trim().length > 50 && s.trim().length < 200)
+                .slice(0, 10);
+            
+            sentences.forEach((sentence, index) => {
+                const trimmed = sentence.trim();
+                if (trimmed.length > 0) {
+                    // Identificar possível conceito principal
+                    const words = trimmed.split(' ');
+                    <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -726,8 +777,32 @@ OUTPUT (COPY THIS FORMAT EXACTLY):
                     flashcards = createBasicFlashcardsFromText(responseText, text);
                 }
 
+                // Tentativa 6: Se tudo falhou, criar flashcards mínimos do texto original
                 if (!flashcards || !Array.isArray(flashcards) || flashcards.length === 0) {
-                    throw new Error(`Modelo não seguiu o formato JSON. Tente um modelo diferente (llama3.1, mistral). Resposta: ${responseText.substring(0, 300)}...`);
+                    console.log('Todas as tentativas de parsing falharam, criando flashcards básicos...');
+                    flashcards = createEmergencyFlashcards(text);
+                }
+
+                if (!flashcards || !Array.isArray(flashcards) || flashcards.length === 0) {
+                    // Mostrar mais informações para debug
+                    console.error('DEBUG INFO:');
+                    console.error('Response length:', responseText.length);
+                    console.error('Response preview:', responseText.substring(0, 500));
+                    console.error('Contains Front:', responseText.includes('Front'));
+                    console.error('Contains [:', responseText.includes('['));
+                    console.error('Contains {:', responseText.includes('{'));
+                    
+                    throw new Error(`TODAS as tentativas falharam. 
+                    
+DICAS PARA RESOLVER:
+1. Tente um modelo diferente: llama3.1:8b, mistral:7b, qwen2:7b
+2. Verifique se o modelo está carregado: ollama list
+3. Reinicie o Ollama: ollama serve
+4. Teste com texto menor primeiro
+
+RESPOSTA DO MODELO: ${responseText.substring(0, 300)}...
+                    
+Se o problema persistir, o modelo pode não ser compatível com instruções estruturadas.`);
                 }
 
                 // Validar estrutura dos flashcards
