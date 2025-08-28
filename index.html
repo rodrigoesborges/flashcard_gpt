@@ -534,53 +534,170 @@ Primeiro, o princípio da informação mínima: o material que você aprende dev
 Segundo, otimize a formulação: a formulação dos seus itens deve ser otimizada para garantir que, no tempo mínimo, a lâmpada certa em seu cérebro se acenda. Isso reduzirá as taxas de erro, aumentará a especificidade, diminuirá o tempo de resposta e ajudará na sua concentração.
 Terceiro: Ignore e não crie cards baseados nos metadados do material nem em exemplos concretos envolvendo empresas e suas características comunicacionais como slogan ou visão.
 
-Retorne APENAS um array JSON válido no formato:
+IMPORTANTE: Retorne APENAS um array JSON válido, sem texto adicional, comentários ou explicações. Formato exato:
 [
     {
         "Front": "Pergunta aqui",
         "Back": "Resposta aqui"
+    },
+    {
+        "Front": "Outra pergunta",
+        "Back": "Outra resposta"
     }
 ]
 
 Texto para criar flashcards:
 ${text}`;
 
-            const response = await fetch(`${ollamaUrl}/api/generate`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model: modelName,
-                    prompt: prompt,
-                    stream: false
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`Erro na API do Ollama: ${response.statusText}`);
-            }
-
-            const result = await response.json();
-            let responseText = result.response;
-
-            // Tentar extrair JSON da resposta
             try {
-                const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-                if (jsonMatch) {
-                    responseText = jsonMatch[0];
+                const response = await fetch(`${ollamaUrl}/api/generate`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: modelName,
+                        prompt: prompt,
+                        stream: false,
+                        options: {
+                            temperature: 0.3,
+                            top_p: 0.9,
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Erro na API do Ollama: ${response.status} - ${response.statusText}`);
                 }
 
-                const flashcards = JSON.parse(responseText);
-                if (!Array.isArray(flashcards)) {
-                    throw new Error('Resposta não é um array válido');
+                const result = await response.json();
+                let responseText = result.response.trim();
+
+                console.log('Resposta bruta do Ollama:', responseText);
+
+                // Múltiplas tentativas para extrair JSON válido
+                let flashcards = null;
+                
+                // Tentativa 1: JSON direto
+                try {
+                    flashcards = JSON.parse(responseText);
+                } catch (e) {
+                    console.log('Tentativa 1 falhou, tentando extrair JSON...');
                 }
 
-                return flashcards;
-            } catch (parseError) {
-                console.error('Erro ao fazer parse da resposta:', responseText);
-                throw new Error('Formato de resposta inválido da IA. Tente novamente.');
+                // Tentativa 2: Extrair JSON entre [ ]
+                if (!flashcards) {
+                    const jsonMatch = responseText.match(/\[[\s\S]*?\]/);
+                    if (jsonMatch) {
+                        try {
+                            flashcards = JSON.parse(jsonMatch[0]);
+                        } catch (e) {
+                            console.log('Tentativa 2 falhou...');
+                        }
+                    }
+                }
+
+                // Tentativa 3: Limpar texto e extrair JSON
+                if (!flashcards) {
+                    const cleanedText = responseText
+                        .replace(/```json/g, '')
+                        .replace(/```/g, '')
+                        .replace(/^\s*[\w\s]*?\[/, '[')
+                        .replace(/\][\w\s]*?$/, ']')
+                        .trim();
+                    
+                    try {
+                        flashcards = JSON.parse(cleanedText);
+                    } catch (e) {
+                        console.log('Tentativa 3 falhou...');
+                    }
+                }
+
+                // Tentativa 4: Procurar por múltiplos objetos JSON e criar array
+                if (!flashcards) {
+                    const objectMatches = responseText.match(/\{[^}]*"Front"[^}]*\}/g);
+                    if (objectMatches) {
+                        try {
+                            flashcards = objectMatches.map(match => JSON.parse(match));
+                        } catch (e) {
+                            console.log('Tentativa 4 falhou...');
+                        }
+                    }
+                }
+
+                // Tentativa 5: Parser manual básico
+                if (!flashcards) {
+                    try {
+                        flashcards = parseFlashcardsManually(responseText);
+                    } catch (e) {
+                        console.log('Tentativa 5 falhou...');
+                    }
+                }
+
+                if (!flashcards || !Array.isArray(flashcards) || flashcards.length === 0) {
+                    throw new Error(`Não foi possível extrair flashcards válidos. Resposta recebida: ${responseText.substring(0, 200)}...`);
+                }
+
+                // Validar estrutura dos flashcards
+                const validFlashcards = flashcards.filter(card => 
+                    card && 
+                    typeof card === 'object' && 
+                    card.Front && 
+                    card.Back &&
+                    card.Front.trim() !== '' &&
+                    card.Back.trim() !== ''
+                );
+
+                if (validFlashcards.length === 0) {
+                    throw new Error('Nenhum flashcard válido encontrado na resposta.');
+                }
+
+                console.log(`${validFlashcards.length} flashcards válidos extraídos.`);
+                return validFlashcards;
+
+            } catch (error) {
+                if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                    throw new Error('Erro de conexão com Ollama. Verifique se está rodando na URL correta.');
+                }
+                throw error;
             }
+        }
+
+        function parseFlashcardsManually(text) {
+            const flashcards = [];
+            const lines = text.split('\n');
+            let currentFront = '';
+            let currentBack = '';
+            
+            for (let line of lines) {
+                line = line.trim();
+                
+                // Procurar por padrões comuns
+                if (line.includes('"Front"') && line.includes(':')) {
+                    const frontMatch = line.match(/"Front"\s*:\s*"([^"]+)"/);
+                    if (frontMatch) {
+                        currentFront = frontMatch[1];
+                    }
+                }
+                
+                if (line.includes('"Back"') && line.includes(':')) {
+                    const backMatch = line.match(/"Back"\s*:\s*"([^"]+)"/);
+                    if (backMatch) {
+                        currentBack = backMatch[1];
+                        
+                        if (currentFront && currentBack) {
+                            flashcards.push({
+                                Front: currentFront,
+                                Back: currentBack
+                            });
+                            currentFront = '';
+                            currentBack = '';
+                        }
+                    }
+                }
+            }
+            
+            return flashcards;
         }
 
         function displayResults(flashcards) {
