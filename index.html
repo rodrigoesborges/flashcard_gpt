@@ -1,55 +1,4 @@
-        function createBasicFlashcardsFromText(modelResponse, originalText) {
-            // Se o modelo deu uma resposta estruturada mas não em JSON,
-            // tentar extrair informações e criar flashcards básicos
-            const flashcards = [];
-            
-            // Método 1: Se o modelo listou pontos, usar eles
-            const bulletPoints = modelResponse.match(/[-•*]\s*(.+)/g);
-            if (bulletPoints && bulletPoints.length > 0) {
-                bulletPoints.slice(0, 8).forEach(point => {
-                    const clean = point.replace(/[-•*]\s*/, '').trim();
-                    if (clean.length > 10) {
-                        flashcards.push({
-                            Front: `O que o texto menciona sobre o tópico principal?`,
-                            Back: clean
-                        });
-                    }
-                });
-            }
-            
-            // Método 2: Se o modelo fez uma explicação, dividir em conceitos
-            if (flashcards.length === 0) {
-                const sentences = modelResponse.split(/[.!?]+/).filter(s => s.trim().length > 30);
-                
-                sentences.slice(0, 6).forEach((sentence, index) => {
-                    const trimmed = sentence.trim();
-                    if (trimmed.length > 0 && !trimmed.toLowerCase().includes('texto fornecido')) {
-                        flashcards.push({
-                            Front: `Qual é o ponto ${index + 1} mencionado no documento?`,
-                            Back: trimmed
-                        });
-                    }
-                });
-            }
-            
-            return flashcards.length > 0 ? flashcards : null;
-        }
-
-        function createEmergencyFlashcards(originalText) {
-            // Última tentativa: criar flashcards diretamente do texto original
-            const flashcards = [];
-            
-            // Dividir texto em sentenças
-            const sentences = originalText.split(/[.!?]+/)
-                .filter(s => s.trim().length > 50 && s.trim().length < 200)
-                .slice(0, 10);
-            
-            sentences.forEach((sentence, index) => {
-                const trimmed = sentence.trim();
-                if (trimmed.length > 0) {
-                    // Identificar possível conceito principal
-                    const words = trimmed.split(' ');
-                    <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -384,6 +333,10 @@
 
             <button class="btn" id="generateBtn" onclick="generateFlashcards()">
                 🚀 Gerar Flashcards
+            </button>
+
+            <button class="btn" id="testBtn" onclick="testOllamaConnection()" style="background: #17a2b8; margin-top: 10px;">
+                🔧 Testar Conexão Ollama
             </button>
 
             <div class="error-message" id="errorMessage"></div>
@@ -835,25 +788,89 @@ Se o problema persistir, o modelo pode não ser compatível com instruções est
             // tentar extrair informações e criar flashcards básicos
             const flashcards = [];
             
-            // Procurar por conceitos mencionados
-            const sentences = originalText.split(/[.!?]+/).filter(s => s.trim().length > 20);
-            
-            sentences.slice(0, 5).forEach((sentence, index) => {
-                const trimmed = sentence.trim();
-                if (trimmed.length > 0) {
-                    // Criar pergunta básica
-                    const words = trimmed.split(' ');
-                    if (words.length > 5) {
-                        const concept = words.slice(0, 3).join(' ');
+            // Método 1: Se o modelo listou pontos, usar eles
+            const bulletPoints = modelResponse.match(/[-•*]\s*(.+)/g);
+            if (bulletPoints && bulletPoints.length > 0) {
+                bulletPoints.slice(0, 8).forEach(point => {
+                    const clean = point.replace(/[-•*]\s*/, '').trim();
+                    if (clean.length > 10) {
                         flashcards.push({
-                            Front: `O que é mencionado sobre ${concept}?`,
+                            Front: `O que o texto menciona sobre o tópico principal?`,
+                            Back: clean
+                        });
+                    }
+                });
+            }
+            
+            // Método 2: Se o modelo fez uma explicação, dividir em conceitos
+            if (flashcards.length === 0) {
+                const sentences = modelResponse.split(/[.!?]+/).filter(s => s.trim().length > 30);
+                
+                sentences.slice(0, 6).forEach((sentence, index) => {
+                    const trimmed = sentence.trim();
+                    if (trimmed.length > 0 && !trimmed.toLowerCase().includes('texto fornecido')) {
+                        flashcards.push({
+                            Front: `Qual é o ponto ${index + 1} mencionado no documento?`,
                             Back: trimmed
                         });
                     }
+                });
+            }
+            
+            return flashcards.length > 0 ? flashcards : null;
+        }
+
+        function createEmergencyFlashcards(originalText) {
+            // Última tentativa: criar flashcards diretamente do texto original
+            const flashcards = [];
+            
+            // Dividir texto em sentenças
+            const sentences = originalText.split(/[.!?]+/)
+                .filter(s => s.trim().length > 50 && s.trim().length < 200)
+                .slice(0, 10);
+            
+            sentences.forEach((sentence, index) => {
+                const trimmed = sentence.trim();
+                if (trimmed.length > 0) {
+                    // Identificar possível conceito principal
+                    const words = trimmed.split(' ');
+                    const importantWords = words.filter(w => 
+                        w.length > 4 && 
+                        !['sobre', 'para', 'como', 'quando', 'onde', 'porque', 'assim', 'também', 'ainda', 'muito'].includes(w.toLowerCase())
+                    );
+                    
+                    let concept = importantWords.slice(0, 2).join(' ');
+                    if (!concept) concept = `tópico ${index + 1}`;
+                    
+                    flashcards.push({
+                        Front: `O que o texto explica sobre ${concept}?`,
+                        Back: trimmed
+                    });
                 }
             });
             
-            return flashcards.length > 0 ? flashcards : null;
+            // Se ainda não temos flashcards, criar alguns genéricos
+            if (flashcards.length === 0) {
+                const textChunks = originalText.split('\n').filter(chunk => chunk.trim().length > 20);
+                
+                textChunks.slice(0, 5).forEach((chunk, index) => {
+                    flashcards.push({
+                        Front: `Qual informação está no parágrafo ${index + 1}?`,
+                        Back: chunk.trim()
+                    });
+                });
+            }
+            
+            // Último recurso: criar um flashcard do texto completo resumido
+            if (flashcards.length === 0 && originalText.length > 0) {
+                const summary = originalText.substring(0, 300) + (originalText.length > 300 ? '...' : '');
+                flashcards.push({
+                    Front: "Qual é o conteúdo principal do documento?",
+                    Back: summary
+                });
+            }
+            
+            return flashcards;
         }
 
         function parseFlashcardsManually(text) {
@@ -1021,6 +1038,65 @@ Se o problema persistir, o modelo pode não ser compatível com instruções est
         document.getElementById('modelName').addEventListener('change', (e) => {
             localStorage.setItem('modelName', e.target.value);
         });
+
+        // Função para testar conexão com Ollama
+        async function testOllamaConnection() {
+            const ollamaUrl = document.getElementById('ollamaUrl').value.trim();
+            const modelName = document.getElementById('modelName').value.trim();
+
+            if (!ollamaUrl || !modelName) {
+                showError('Preencha a URL do Ollama e o nome do modelo primeiro.');
+                return;
+            }
+
+            try {
+                showProgress('Testando conexão...');
+                
+                // Testar se o Ollama está rodando
+                const healthResponse = await fetch(`${ollamaUrl}/api/tags`);
+                
+                if (!healthResponse.ok) {
+                    throw new Error('Ollama não está respondendo na URL especificada');
+                }
+
+                const models = await healthResponse.json();
+                console.log('Modelos disponíveis:', models);
+
+                updateProgress(50, 'Testando modelo...');
+
+                // Testar o modelo específico
+                const testResponse = await fetch(`${ollamaUrl}/api/generate`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: modelName,
+                        prompt: 'Responda apenas: OK',
+                        stream: false,
+                        options: {
+                            num_predict: 10
+                        }
+                    })
+                });
+
+                if (!testResponse.ok) {
+                    throw new Error(`Modelo '${modelName}' não encontrado ou erro na resposta`);
+                }
+
+                const result = await testResponse.json();
+                updateProgress(100, 'Sucesso!');
+
+                setTimeout(() => {
+                    hideProgress();
+                    alert(`✅ Conexão OK!\n\nModelo: ${modelName}\nResposta: ${result.response}\n\nModelos disponíveis: ${models.models?.map(m => m.name).join(', ') || 'Não listados'}`);
+                }, 1000);
+
+            } catch (error) {
+                hideProgress();
+                showError(`❌ Erro na conexão: ${error.message}\n\nVerifique:\n1. Se o Ollama está rodando (ollama serve)\n2. Se o modelo está instalado (ollama list)\n3. Se a URL está correta`);
+            }
+        }
     </script>
 </body>
 </html>
