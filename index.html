@@ -528,25 +528,32 @@
         }
 
         async function generateWithOllama(text, ollamaUrl, modelName) {
-            const prompt = `Eu quero que você atue como um criador profissional de cartões flashcards Anki, capaz de criar cartões Anki a partir do texto que eu fornecer.
-Com relação à formulação do conteúdo do cartão, você deve seguir três princípios:
-Primeiro, o princípio da informação mínima: o material que você aprende deve ser formulado da maneira mais simples possível. Simplicidade não implica em perda de informação ou em pular as partes difíceis.
-Segundo, otimize a formulação: a formulação dos seus itens deve ser otimizada para garantir que, no tempo mínimo, a lâmpada certa em seu cérebro se acenda. Isso reduzirá as taxas de erro, aumentará a especificidade, diminuirá o tempo de resposta e ajudará na sua concentração.
-Terceiro: Ignore e não crie cards baseados nos metadados do material nem em exemplos concretos envolvendo empresas e suas características comunicacionais como slogan ou visão.
+            const prompt = `Você deve responder EXCLUSIVAMENTE em português brasileiro e retornar APENAS JSON válido, sem nenhuma explicação ou texto adicional.
 
-IMPORTANTE: Retorne APENAS um array JSON válido, sem texto adicional, comentários ou explicações. Formato exato:
+Atue como um criador profissional de cartões flashcards Anki. Siga estes princípios:
+
+1. PRINCÍPIO DA INFORMAÇÃO MÍNIMA: Formule o material da maneira mais simples possível, sem perder informações importantes.
+
+2. OTIMIZE A FORMULAÇÃO: Garanta que a pergunta seja precisa para ativar a resposta correta rapidamente.
+
+3. IGNORE METADADOS: Não crie cards baseados em metadados ou exemplos específicos de empresas.
+
+FORMATO OBRIGATÓRIO - Retorne SOMENTE este JSON, sem texto antes ou depois:
 [
     {
-        "Front": "Pergunta aqui",
-        "Back": "Resposta aqui"
-    },
-    {
-        "Front": "Outra pergunta",
-        "Back": "Outra resposta"
+        "Front": "Pergunta em português",
+        "Back": "Resposta em português"
     }
 ]
 
-Texto para criar flashcards:
+REGRAS CRÍTICAS:
+- Responda SOMENTE em português brasileiro
+- Retorne APENAS o array JSON
+- NÃO adicione explicações, comentários ou texto extra
+- NÃO use markdown ou formatação
+- Crie entre 5-15 flashcards do texto
+
+Texto para análise:
 ${text}`;
 
             try {
