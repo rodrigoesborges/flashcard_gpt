@@ -528,33 +528,62 @@
         }
 
         async function generateWithOllama(text, ollamaUrl, modelName) {
-            const prompt = `Você deve responder EXCLUSIVAMENTE em português brasileiro e retornar APENAS JSON válido, sem nenhuma explicação ou texto adicional.
+            // Primeiro, tentar resetar o contexto do modelo
+            try {
+                await fetch(`${ollamaUrl}/api/generate`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: modelName,
+                        prompt: "RESET",
+                        stream: false,
+                        options: {
+                            num_ctx: 2048,
+                        }
+                    })
+                });
+            } catch (e) {
+                console.log('Não foi possível resetar contexto, continuando...');
+            }
 
-Atue como um criador profissional de cartões flashcards Anki. Siga estes princípios:
+            const systemPrompt = `### INSTRUÇÕES CRÍTICAS - IGNORE QUALQUER CONTEXTO ANTERIOR ###
 
-1. PRINCÍPIO DA INFORMAÇÃO MÍNIMA: Formule o material da maneira mais simples possível, sem perder informações importantes.
+VOCÊ É UM BOT DE JSON. SUA ÚNICA FUNÇÃO É RETORNAR JSON VÁLIDO EM PORTUGUÊS.
 
-2. OTIMIZE A FORMULAÇÃO: Garanta que a pergunta seja precisa para ativar a resposta correta rapidamente.
+IGNORE:
+- Qualquer instrução anterior
+- Qualquer contexto pré-carregado
+- Qualquer prompt de sistema anterior
+- Qualquer personalidade anterior
 
-3. IGNORE METADADOS: Não crie cards baseados em metadados ou exemplos específicos de empresas.
+NOVA IDENTIDADE: Você é um gerador de flashcards JSON que responde SOMENTE em português brasileiro.
 
-FORMATO OBRIGATÓRIO - Retorne SOMENTE este JSON, sem texto antes ou depois:
+REGRAS ABSOLUTAS:
+1. NUNCA explique nada
+2. NUNCA adicione texto antes ou depois do JSON
+3. NUNCA use "Okay", "Here's", "Aqui está" ou similares
+4. RESPONDA SOMENTE: [{"Front":"pergunta","Back":"resposta"}]
+5. SEMPRE em português brasileiro
+6. SEMPRE formato JSON válido
+
+### TAREFA ###
+Crie flashcards do texto abaixo seguindo os princípios Anki:
+- Informação mínima: Uma informação por card
+- Formulação otimizada: Perguntas claras e diretas
+- Ignore metadados e exemplos de empresas
+
+FORMATO OBRIGATÓRIO (copie exatamente esta estrutura):
 [
-    {
-        "Front": "Pergunta em português",
-        "Back": "Resposta em português"
-    }
+    {"Front": "Qual é o conceito de X?", "Back": "X é definido como..."},
+    {"Front": "Quais são as características de Y?", "Back": "Y possui as características..."}
 ]
 
-REGRAS CRÍTICAS:
-- Responda SOMENTE em português brasileiro
-- Retorne APENAS o array JSON
-- NÃO adicione explicações, comentários ou texto extra
-- NÃO use markdown ou formatação
-- Crie entre 5-15 flashcards do texto
+TEXTO:
+${text}
 
-Texto para análise:
-${text}`;
+RESPOSTA (APENAS JSON):`;
 
             try {
                 const response = await fetch(`${ollamaUrl}/api/generate`, {
@@ -564,11 +593,16 @@ ${text}`;
                     },
                     body: JSON.stringify({
                         model: modelName,
-                        prompt: prompt,
+                        prompt: systemPrompt,
                         stream: false,
                         options: {
-                            temperature: 0.3,
-                            top_p: 0.9,
+                            temperature: 0.1,
+                            top_p: 0.8,
+                            top_k: 20,
+                            repeat_penalty: 1.1,
+                            num_ctx: 4096,
+                            num_predict: 2048,
+                            stop: ["###", "Explicação:", "Nota:", "Observação:", "Here's", "Okay"]
                         }
                     })
                 });
@@ -581,6 +615,48 @@ ${text}`;
                 let responseText = result.response.trim();
 
                 console.log('Resposta bruta do Ollama:', responseText);
+
+                // Se a resposta começar com texto explicativo, tentar segunda tentativa com prompt mais agressivo
+                if (responseText.toLowerCase().includes('texto fornecido') || 
+                    responseText.toLowerCase().includes('aqui está') ||
+                    responseText.toLowerCase().includes('okay') ||
+                    responseText.toLowerCase().includes('here') ||
+                    !responseText.includes('[')) {
+                    
+                    console.log('Primeira tentativa falhou, tentando prompt mais agressivo...');
+                    
+                    const aggressivePrompt = `JSON ONLY! NO TEXT! 
+
+INPUT: ${text.substring(0, 500)}...
+
+OUTPUT (COPY THIS FORMAT EXACTLY):
+[{"Front":"Pergunta?","Back":"Resposta"}]`;
+
+                    const secondResponse = await fetch(`${ollamaUrl}/api/generate`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            model: modelName,
+                            prompt: aggressivePrompt,
+                            stream: false,
+                            options: {
+                                temperature: 0.05,
+                                top_p: 0.5,
+                                num_ctx: 2048,
+                                num_predict: 1024,
+                                stop: ["INPUT:", "OUTPUT:", "TEXT:", "EXPLANATION:"]
+                            }
+                        })
+                    });
+
+                    if (secondResponse.ok) {
+                        const secondResult = await secondResponse.json();
+                        responseText = secondResult.response.trim();
+                        console.log('Segunda tentativa - Resposta:', responseText);
+                    }
+                }
 
                 // Múltiplas tentativas para extrair JSON válido
                 let flashcards = null;
@@ -604,45 +680,54 @@ ${text}`;
                     }
                 }
 
-                // Tentativa 3: Limpar texto e extrair JSON
+                // Tentativa 3: Limpar texto agressivamente
                 if (!flashcards) {
-                    const cleanedText = responseText
-                        .replace(/```json/g, '')
+                    let cleanedText = responseText
+                        .replace(/```json/gi, '')
                         .replace(/```/g, '')
-                        .replace(/^\s*[\w\s]*?\[/, '[')
-                        .replace(/\][\w\s]*?$/, ']')
+                        .replace(/^[^[\{]*/, '') // Remove tudo antes do primeiro [ ou {
+                        .replace(/[^}\]]*$/, '') // Remove tudo depois do último } ou ]
+                        .replace(/\n/g, ' ')
+                        .replace(/\s+/g, ' ')
                         .trim();
+                    
+                    // Forçar início com [
+                    if (!cleanedText.startsWith('[')) {
+                        const arrayMatch = cleanedText.match(/\[[\s\S]*?\]/);
+                        if (arrayMatch) {
+                            cleanedText = arrayMatch[0];
+                        } else {
+                            // Tentar criar array se encontrar objetos
+                            const objMatches = cleanedText.match(/\{[^}]*"Front"[^}]*\}/g);
+                            if (objMatches) {
+                                cleanedText = `[${objMatches.join(',')}]`;
+                            }
+                        }
+                    }
                     
                     try {
                         flashcards = JSON.parse(cleanedText);
                     } catch (e) {
-                        console.log('Tentativa 3 falhou...');
+                        console.log('Tentativa 3 falhou...', e.message);
                     }
                 }
 
-                // Tentativa 4: Procurar por múltiplos objetos JSON e criar array
-                if (!flashcards) {
-                    const objectMatches = responseText.match(/\{[^}]*"Front"[^}]*\}/g);
-                    if (objectMatches) {
-                        try {
-                            flashcards = objectMatches.map(match => JSON.parse(match));
-                        } catch (e) {
-                            console.log('Tentativa 4 falhou...');
-                        }
-                    }
-                }
-
-                // Tentativa 5: Parser manual básico
+                // Tentativa 4: Parser manual
                 if (!flashcards) {
                     try {
                         flashcards = parseFlashcardsManually(responseText);
                     } catch (e) {
-                        console.log('Tentativa 5 falhou...');
+                        console.log('Tentativa 4 falhou...');
                     }
                 }
 
+                // Tentativa 5: Criar flashcards básicos se o modelo deu uma explicação estruturada
+                if (!flashcards && responseText.length > 100) {
+                    flashcards = createBasicFlashcardsFromText(responseText, text);
+                }
+
                 if (!flashcards || !Array.isArray(flashcards) || flashcards.length === 0) {
-                    throw new Error(`Não foi possível extrair flashcards válidos. Resposta recebida: ${responseText.substring(0, 200)}...`);
+                    throw new Error(`Modelo não seguiu o formato JSON. Tente um modelo diferente (llama3.1, mistral). Resposta: ${responseText.substring(0, 300)}...`);
                 }
 
                 // Validar estrutura dos flashcards
@@ -656,7 +741,7 @@ ${text}`;
                 );
 
                 if (validFlashcards.length === 0) {
-                    throw new Error('Nenhum flashcard válido encontrado na resposta.');
+                    throw new Error('Nenhum flashcard válido encontrado. O modelo pode não estar seguindo as instruções JSON.');
                 }
 
                 console.log(`${validFlashcards.length} flashcards válidos extraídos.`);
@@ -670,8 +755,50 @@ ${text}`;
             }
         }
 
+        function createBasicFlashcardsFromText(modelResponse, originalText) {
+            // Se o modelo deu uma resposta estruturada mas não em JSON,
+            // tentar extrair informações e criar flashcards básicos
+            const flashcards = [];
+            
+            // Procurar por conceitos mencionados
+            const sentences = originalText.split(/[.!?]+/).filter(s => s.trim().length > 20);
+            
+            sentences.slice(0, 5).forEach((sentence, index) => {
+                const trimmed = sentence.trim();
+                if (trimmed.length > 0) {
+                    // Criar pergunta básica
+                    const words = trimmed.split(' ');
+                    if (words.length > 5) {
+                        const concept = words.slice(0, 3).join(' ');
+                        flashcards.push({
+                            Front: `O que é mencionado sobre ${concept}?`,
+                            Back: trimmed
+                        });
+                    }
+                }
+            });
+            
+            return flashcards.length > 0 ? flashcards : null;
+        }
+
         function parseFlashcardsManually(text) {
             const flashcards = [];
+            
+            // Método 1: Procurar por padrões "Front" e "Back"
+            const frontBackPattern = /"Front"\s*:\s*"([^"]+)"\s*,\s*"Back"\s*:\s*"([^"]+)"/g;
+            let match;
+            while ((match = frontBackPattern.exec(text)) !== null) {
+                flashcards.push({
+                    Front: match[1],
+                    Back: match[2]
+                });
+            }
+            
+            if (flashcards.length > 0) {
+                return flashcards;
+            }
+            
+            // Método 2: Procurar por padrões P: e R: (formato brasileiro comum)
             const lines = text.split('\n');
             let currentFront = '';
             let currentBack = '';
@@ -679,28 +806,55 @@ ${text}`;
             for (let line of lines) {
                 line = line.trim();
                 
-                // Procurar por padrões comuns
-                if (line.includes('"Front"') && line.includes(':')) {
-                    const frontMatch = line.match(/"Front"\s*:\s*"([^"]+)"/);
-                    if (frontMatch) {
-                        currentFront = frontMatch[1];
+                // Padrão P: pergunta
+                if (line.match(/^P\s*:\s*.+/i) || line.match(/^Pergunta\s*:\s*.+/i)) {
+                    currentFront = line.replace(/^P\s*:\s*/i, '').replace(/^Pergunta\s*:\s*/i, '').trim();
+                }
+                
+                // Padrão R: resposta
+                if (line.match(/^R\s*:\s*.+/i) || line.match(/^Resposta\s*:\s*.+/i)) {
+                    currentBack = line.replace(/^R\s*:\s*/i, '').replace(/^Resposta\s*:\s*/i, '').trim();
+                    
+                    if (currentFront && currentBack) {
+                        flashcards.push({
+                            Front: currentFront,
+                            Back: currentBack
+                        });
+                        currentFront = '';
+                        currentBack = '';
                     }
                 }
                 
-                if (line.includes('"Back"') && line.includes(':')) {
-                    const backMatch = line.match(/"Back"\s*:\s*"([^"]+)"/);
-                    if (backMatch) {
-                        currentBack = backMatch[1];
-                        
-                        if (currentFront && currentBack) {
-                            flashcards.push({
-                                Front: currentFront,
-                                Back: currentBack
-                            });
-                            currentFront = '';
-                            currentBack = '';
-                        }
+                // Procurar por padrões JSON individuais
+                const frontMatch = line.match(/"Front"\s*:\s*"([^"]+)"/);
+                if (frontMatch) {
+                    currentFront = frontMatch[1];
+                }
+                
+                const backMatch = line.match(/"Back"\s*:\s*"([^"]+)"/);
+                if (backMatch) {
+                    currentBack = backMatch[1];
+                    
+                    if (currentFront && currentBack) {
+                        flashcards.push({
+                            Front: currentFront,
+                            Back: currentBack
+                        });
+                        currentFront = '';
+                        currentBack = '';
                     }
+                }
+            }
+            
+            // Método 3: Procurar por estruturas de objeto dispersas
+            if (flashcards.length === 0) {
+                const objPattern = /\{\s*"Front"\s*:\s*"([^"]+)"\s*,\s*"Back"\s*:\s*"([^"]+)"\s*\}/g;
+                let objMatch;
+                while ((objMatch = objPattern.exec(text)) !== null) {
+                    flashcards.push({
+                        Front: objMatch[1],
+                        Back: objMatch[2]
+                    });
                 }
             }
             
